@@ -24,9 +24,10 @@ pub struct PriceChange {
 pub struct Trade {
     pub timestamp: i64,
     pub asset_binary: u8, 
+    pub price_bps: i16,
     pub size: f64,
     pub side: u8,               //0=BUY 1=SELL
-    pub free_rate_bps: i16,     // fee rate in basis points %
+    pub fee_rate_bps: i16,     // fee rate in basis points %
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
