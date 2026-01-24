@@ -22,12 +22,23 @@ pub struct PriceChange {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trade {
-    pub timestamp: i64,
-    pub asset_binary: u8, 
-    pub price_bps: i16,
-    pub size: f64,
-    pub side: u8,               //0=BUY 1=SELL
-    pub fee_rate_bps: i16,     // fee rate in basis points %
+    pub timestamp: i64,         // unix time
+    pub asset_binary: u8,       //
+    pub transaction_hash: u128, //
+    pub price_bps: i16,         // prce in basis points (price*10_000) as i16
+    pub size: f64,              // 
+    pub side: u8,               // 0=BUY 1=SELL
+    pub fee_rate_bps: i16,      // fee rate in basis points %
+}
+
+impl Trade {
+
+    // just store the first 128B of the hash (largest native primitive is u128 and i dont want to
+    // make another type for this)
+    pub fn parse_hash_hex(hash_str: &str) -> u128 {
+        let hash_hex = hash_str.strip_prefix("0x").unwrap_or(hash_str);
+        u128::from_str_radix(&hash_hex[..32], 16).unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

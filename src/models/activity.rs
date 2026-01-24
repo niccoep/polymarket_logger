@@ -1,5 +1,6 @@
 use serde::{Serialize, Deserialize};
 
+// where parsed json is stored in memory for rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserActivity {
     pub timestamp: i64, // TODO human readable format (time crate?)
@@ -26,6 +27,7 @@ pub struct UserActivity {
 }
 
 
+// for parquet (reading/writing)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserActivityRecord {
     pub timestamp: i64,
@@ -75,13 +77,13 @@ impl UserActivity {
         timestamp: self.timestamp,
         proxy_wallet: self.proxy_wallet, //can be compressed by storing as uint?
         condition_id: self.condition_id, //can be compressed by storing as uint?
-        type_: ActivityType::from_str(&self.type_)?,
+        type_: 0,// TODO fix this with a set or map ActivityType::from_str(&self.type_)?,
         size: self.size,
         usdc_size: self.usdc_size,
         transaction_hash: self.transaction_hash, // TODO uint storage of hash
         price: self.price,
         asset: self.asset,
-        side: side_u8,
+        side: side,
         outcome_index: self.outcome_index,
         title: self.title,
         event_slug: self.event_slug,
