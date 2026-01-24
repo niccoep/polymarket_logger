@@ -59,7 +59,7 @@ struct TradeEvent {
 
 #[derive(Debug)]
 pub enum MarketEvent {
-    Book(Vec<BookLevel>),
+    Book( Vec<( Vec<BookLevel>, Vec<BookLevel> )> ),
     PriceChange(Vec<PriceChange>),
     Trade(Trade),
 }
@@ -144,17 +144,18 @@ impl WebSocketClient {
     fn parse_message(&self, text: &str, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Option<MarketEvent>> {
         let value: serde_json::Value = serde_json::from_str(text)?;
 
-        //match &value {
-        //    serde_json::Value::Null => println!("Null"),
-        //    serde_json::Value::Bool(b) => println!("Bool: {}", b),
-        //    serde_json::Value::Number(n) => println!("Number: {}", n),
-        //    serde_json::Value::String(s) => println!("String: {}", s),
-        //    serde_json::Value::Array(a) => println!("Array: {:?}", a),
-        //    serde_json::Value::Object(o) => println!("Object: {:?}", o),
-        //}
+        match &value {
+            serde_json::Value::Null => println!("Null"),
+            serde_json::Value::Bool(b) => println!("Bool: {}", b),
+            serde_json::Value::Number(n) => println!("Number: {}", n),
+            serde_json::Value::String(s) => println!("String: {}", s),
+            serde_json::Value::Array(a) => println!("Array: {:?}", a),
+            serde_json::Value::Object(o) => println!("Object: {:?}", o),
+        }
 
         let values_to_process = match value.as_array() {
             Some(array) => {
+                println!("array found");
                 if array.is_empty() { return Ok(None) };
                 array.as_slice()
             }
@@ -168,11 +169,12 @@ impl WebSocketClient {
 
         match event_type {
             "book" => {
-                let mut all_levels = Vec::new();
+                let mut all_levels: Vec<(Vec<BookLevel>, Vec<BookLevel>)> = Vec::new();
                 for val in values_to_process {
+                    println!("{}", values_to_process.len());
                     let event: BookEvent = serde_json::from_value(val.clone())?;
-                    let mut book_levels = self.parse_book_event(event, asset_binary_map)?;
-                    all_levels.append(&mut book_levels);
+                    let book_levels = self.parse_book_event(event, asset_binary_map)?;
+                    all_levels.push(book_levels);
                 }
                 Ok(Some(MarketEvent::Book(all_levels)))
             }
