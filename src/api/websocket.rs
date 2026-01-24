@@ -1,5 +1,5 @@
 use crate::error::{PolyError, Result};
-use crate::models::events::{BookLevel, BookSide, PriceChange, Side, Trade};
+use crate::models::events::{BookLevel, BookSide, Side, Trade};
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -59,7 +59,7 @@ struct TradeEvent {
 #[derive(Debug)]
 pub enum MarketEvent {
     Book(Vec<BookLevel>),
-    PriceChange(Vec<PriceChange>),
+    PriceChange(Vec<BookLevel>),
     Trade(Trade),
 }
 
@@ -173,7 +173,7 @@ impl WebSocketClient {
                 Some("price_change") => {
                     let event: PriceChangeEvent = serde_json::from_value(val)?;
                     let price_changes = self.parse_price_change_event(event, asset_binary_map)?;
-                    Some(MarketEvent::PriceChange(price_changes))
+                    Some(MarketEvent::BookLevel(price_changes))
                 }
                 Some("last_trade_price") => {
                     let event: TradeEvent = serde_json::from_value(val)?;
@@ -224,7 +224,7 @@ impl WebSocketClient {
         Ok(book)
     }
 
-    fn parse_price_change_event(&self, event: PriceChangeEvent, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Vec<PriceChange>> {
+    fn parse_price_change_event(&self, event: PriceChangeEvent, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Vec<BookLevel>> {
         let timestamp = event.timestamp.parse::<i64>()
             .map_err(|_| PolyError::JsonError(serde_json::Error::custom("Invalid timestamp")))?;
     
@@ -237,7 +237,7 @@ impl WebSocketClient {
             let side = Side::from_str(&change.side)
                 .ok_or_else(|| PolyError::JsonError(serde_json::Error::custom("Invalid Side")))?;
 
-            changes.push(PriceChange {
+            changes.push(BookLevel {
                 timestamp,
                 asset_binary,
                 price_bps: (change.price.parse::<f64>().unwrap_or(-1.0) * 10_000.0) as i16,
