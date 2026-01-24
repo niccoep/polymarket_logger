@@ -10,15 +10,6 @@ pub struct BookLevel {
     pub size: f32,          // number of contracts for 
 }
 
-//#[derive(Debug, Clone, Serialize, Deserialize)]
-//pub struct PriceChange {
-//    pub timestamp: i64,
-//    pub asset_binary: u8,
-//    pub side: u8, //0=BUY 1=SELL
-//    pub price_bps: i16,     // usdc price in basis points =  usdc price * 10000 (so mapping 0.0-1.0 to 0-10000)
-//    pub size: f64,
-//}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trade {
     pub timestamp: i64,         // unix time
