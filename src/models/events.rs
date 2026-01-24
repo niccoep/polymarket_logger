@@ -6,9 +6,8 @@ pub struct BookLevel {
     pub timestamp: i64,     // unix time
     pub asset_binary: u8,   // 0 or 1
     pub side: u8,           // 0=bid 1=ask
-    pub level: u32,         // 0=best, 1=second best, etc
     pub price_bps: i16,     // usdc price in basis points =  usdc price * 10000 (so mapping 0.0-1.0 to 0-10000)
-    pub size: f64,          // number of contracts for 
+    pub size: f32,          // number of contracts for 
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

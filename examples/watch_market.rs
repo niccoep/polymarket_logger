@@ -2,6 +2,7 @@ use logger::api::{gamma::GammaClient, websocket::{WebSocketClient, MarketEvent}}
 use logger::models::events::Trade;
 use std::collections::HashMap;
 
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let slug = std::env::args()
@@ -30,66 +31,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         match ws_client.next_event(&asset_binary_map).await? {
-            Some(event) => match event {
-                MarketEvent::Book((bids,asks)) => {
-                    //println!("Book update:");
-                    let mut bids_0 = Vec::new();
-                    let mut asks_0 = Vec::new();
-                    let mut bids_1 = Vec::new();
-                    let mut asks_1 = Vec::new();
+            Some(events) => 
+                for event in events {
+                    match event {
+                        //pub timestamp: i64,     // unix time
+                        //pub asset_binary: u8,   // 0 or 1
+                        //pub side: u8,           // 0=bid 1=ask
+                        //pub price_bps: i16,     // usdc price in basis points =  usdc price * 10000 (so mapping 0.0-1.0 to 0-10000)
+                        //pub size: f32,          // number of contracts for 
+                        MarketEvent::Book(book_snapshot) => {
+                            //for book_level in book_snapshot {
+                            //    match book_level.asset_binary {
+                            //        0 => {
+                            //            println!("▲");
+                            //        }
+                            //        1 => {
+                            //            println!("▼");
+                            //        }
+                            //        _ => {}
+                            //    }
+                            //    //println!("\t: {:?}", book_level);
+                            //    println!("\tbook update");
+                            //}
+                            println!("\tbook update");
+                            println!();
+                        }
 
-                    for level in levels {
-                         match (level.asset_binary, level.side) {
-                             (0, 0) => bids_0.push(level),
-                             (0, 1) => asks_0.push(level),
-                             (1, 0) => bids_1.push(level),
-                             (1, 1) => asks_1.push(level),
-                             _ => {}
-                         }
+                    MarketEvent::PriceChange(changes) => {
+                        //println!("Price change:");
+                        for change in changes {
+                            println!("{:?}", change);
+                        }
+                        println!();
                     }
-                    // if we have a any bids or asks 
-                    println!("Asset 0 (▲):");
-                    println!("\tBids: {:?}", bids_0
-                        .iter()
-                        .take(3)
-                        .map(|l| (l.price_bps as f64 / 10_000.0, l.size, l.side))
-                        .collect::<Vec<_>>()
-                    );
-                    println!("\tAsks: {:?}", asks_0
-                        .iter()
-                        .take(3)
-                        .map(|l| (l.price_bps as f64 / 10_000.0, l.size, l.side))
-                        .collect::<Vec<_>>()
-                    );
-                    println!("Asset 1 (▼):");
-                    println!("\tBids: {:?}", bids_1
-                        .iter()
-                        .take(3)
-                        .map(|l| (l.price_bps as f64 / 10_000.0, l.size, l.side))
-                        .collect::<Vec<_>>()
-                    );
-                    println!("\tAsks: {:?}", asks_1
-                        .iter()
-                        .take(3)
-                        .map(|l| (l.price_bps as f64 / 10_000.0, l.size, l.side))
-                        .collect::<Vec<_>>()
-                    );
-                    println!();
-                }
-
-                MarketEvent::PriceChange(changes) => {
-                    //println!("Price change:");
-                    //for change in changes {
-                    //    let symbol = if change.asset_binary == 0 { "▲" } else { "▼" };
-                    //    let side = if change.side == 0 { "BUY " } else { "SELL" };
-                    //    println!("\t{} {} ${} {}", symbol, side, (change.price_bps as f64 / 10_000.0), change.size);
-                    //}
-                    //println!();
-                }
-                MarketEvent::Trade(trade) => {
-                    let symbol = if trade.asset_binary == 0 { "▲" } else { "▼" };
-                    let side = if trade.side == 0 { "BUY " } else { "SELL" };
-                    println!("\t{} {:<4} ${:<5} {:<8.2} {:08x}", symbol, side, (trade.price_bps as f64 / 10_000.0), trade.size, (trade.transaction_hash >> 96) as u32);
+                    MarketEvent::Trade(trade) => {
+                        let symbol = if trade.asset_binary == 0 { "▲" } else { "▼" };
+                        let side = if trade.side == 0 { "BUY " } else { "SELL" };
+                        println!("\t{} {:<4} ${:<5} {:<8.2} {:08x}", symbol, side, (trade.price_bps as f64 / 10_000.0), trade.size, (trade.transaction_hash >> 96) as u32);
+                    }
                 }
             }
             None =>  {

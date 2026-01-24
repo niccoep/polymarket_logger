@@ -21,14 +21,12 @@ struct RawPriceChange {
     price: String,
     size: String,
     side: String,
-    best_bid: String,
-    best_ask: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct PriceChangeEvent {
-    price_changes: Vec<RawPriceChange>,
     timestamp: String,
+    price_changes: Vec<RawPriceChange>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +42,7 @@ struct BookEvent {
     bids: Vec<RawBookLevel>,
     asks: Vec<RawBookLevel>,
     timestamp: String,
+    hash: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,13 +58,13 @@ struct TradeEvent {
 
 #[derive(Debug)]
 pub enum MarketEvent {
-    Book( Vec<( Vec<BookLevel>, Vec<BookLevel> )> ),
+    Book(Vec<BookLevel>),
     PriceChange(Vec<PriceChange>),
     Trade(Trade),
 }
 
 pub struct WebSocketClient {
-    asset_ids: Vec<String>,
+    asset_ids: Vec<String>, //TODO change to tuple of string
     ws_stream: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
 
 }
@@ -116,7 +115,7 @@ impl WebSocketClient {
         Ok(())
     }
 
-    pub async fn next_event(&mut self, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Option<MarketEvent>> {
+    pub async fn next_event(&mut self, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Option<Vec<MarketEvent>>> {
         if let Some(ws) = &mut self.ws_stream {
             if let Some(msg_result) = ws.next().await {
                 let msg = msg_result.map_err(|e| PolyError::WebsocketError(e.to_string()))?;
@@ -127,7 +126,7 @@ impl WebSocketClient {
                             self.send_ping().await?;
                             return Ok(None);
                         }
-                        return self.parse_message(&text, asset_binary_map);
+                        return Ok(Some(self.parse_message(&text, asset_binary_map)?));
 
                     }
                     Message::Close(_) => {
@@ -141,91 +140,88 @@ impl WebSocketClient {
         Ok(None)
     }
 
-    fn parse_message(&self, text: &str, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Option<MarketEvent>> {
+    fn parse_message(&self, text: &str, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Vec<MarketEvent>> {
         let value: serde_json::Value = serde_json::from_str(text)?;
+        //println!("{}", text);
+        //println!();
 
-        match &value {
-            serde_json::Value::Null => println!("Null"),
-            serde_json::Value::Bool(b) => println!("Bool: {}", b),
-            serde_json::Value::Number(n) => println!("Number: {}", n),
-            serde_json::Value::String(s) => println!("String: {}", s),
-            serde_json::Value::Array(a) => println!("Array: {:?}", a),
-            serde_json::Value::Object(o) => println!("Object: {:?}", o),
-        }
-
-        let values_to_process = match value.as_array() {
-            Some(array) => {
-                println!("array found");
-                if array.is_empty() { return Ok(None) };
-                array.as_slice()
-            }
-            None => std::slice::from_ref(&value)
+        //match &value {
+        //    serde_json::Value::Null => println!("Null"),
+        //    serde_json::Value::Bool(b) => println!("Bool: {}", b),
+        //    serde_json::Value::Number(n) => println!("Number: {}", n),
+        //    serde_json::Value::String(s) => println!("String: {}", s),
+        //    serde_json::Value::Array(a) => println!("Array: {:?}", a),
+        //    serde_json::Value::Object(o) => println!("Object: {:?}", o),
+        //}
+        let objects = match value {
+            serde_json::Value::Object(_) => vec![value],
+            serde_json::Value::Array(arr) => arr,
+            _ => vec![],
         };
 
-        let event_type = values_to_process.get(0)
-            .and_then(|v| v.get("event_type"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| PolyError::JsonError(serde_json::Error::custom("Missing event_type")))?;
-
-        match event_type {
-            "book" => {
-                let mut all_levels: Vec<(Vec<BookLevel>, Vec<BookLevel>)> = Vec::new();
-                for val in values_to_process {
-                    println!("{}", values_to_process.len());
+        let mut events = Vec::new();
+        
+        // for all order book updates and price changes, i.e. anything that changes something on
+        // the order book, i want an entry for each price level
+        for val in objects {
+            let event = match val.get("event_type").and_then(|v| v.as_str()) {
+                Some("book") => {
                     let event: BookEvent = serde_json::from_value(val.clone())?;
-                    let book_levels = self.parse_book_event(event, asset_binary_map)?;
-                    all_levels.push(book_levels);
+                    let book = self.parse_book_event(event, asset_binary_map)?;
+                    Some(MarketEvent::Book(book))
                 }
-                Ok(Some(MarketEvent::Book(all_levels)))
+                Some("price_change") => {
+                    let event: PriceChangeEvent = serde_json::from_value(val)?;
+                    let price_changes = self.parse_price_change_event(event, asset_binary_map)?;
+                    Some(MarketEvent::PriceChange(price_changes))
+                }
+                Some("last_trade_price") => {
+                    let event: TradeEvent = serde_json::from_value(val)?;
+                    let trade = self.parse_trade_event(event, asset_binary_map)?;
+                    Some(MarketEvent::Trade(trade))
+                }
+                _ => None,
+            };
+
+            if let Some(e) = event {
+                events.push(e);
             }
-            "price_change" => {
-                let event: PriceChangeEvent = serde_json::from_value(value)?;
-                let price_changes = self.parse_price_change_event(event, asset_binary_map)?;
-                Ok(Some(MarketEvent::PriceChange(price_changes)))
-            }
-            "last_trade_price" => {
-                let event: TradeEvent = serde_json::from_value(value)?;
-                let trade = self.parse_trade_event(event, asset_binary_map)?;
-                Ok(Some(MarketEvent::Trade(trade)))
-            }
-            _ => Ok(None),
         }
+         
+        Ok(events)
     }
 
-    fn parse_book_event(&self, event: BookEvent, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<(Vec<BookLevel>,Vec<BookLevel>)> {
+    fn parse_book_event(&self, event: BookEvent, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Vec<BookLevel>> {
         let timestamp = event.timestamp.parse::<i64>()
             .map_err(|_| PolyError::JsonError(serde_json::Error::custom("Invalid timestamp")))?;
         let asset_binary = *asset_binary_map.get(&event.asset_id)
             .ok_or(PolyError::InvalidAssetId("Invalid asset_id for book event".to_string()))?;
 
-        let mut bids = Vec::new();
-        let mut asks = Vec::new();
+        let mut book = Vec::new();
 
         // parse bid
-        for (level, bid) in event.bids.iter().enumerate() {
-            bids.push(BookLevel {
+        for bid in event.bids {
+            book.push(BookLevel {
                 timestamp,
                 asset_binary,
                 side: BookSide::Bid.to_u8(),
-                level: level as u32,
                 price_bps: (bid.price.parse::<f64>().unwrap_or(0.0) * 10_000.0) as i16,
                 size: bid.size.parse().unwrap_or(0.0),
             });
         }
 
         // parse ask
-        for (level, ask) in event.asks.iter().enumerate() {
-            asks.push(BookLevel {
+        for  ask in event.asks {
+            book.push(BookLevel {
                 timestamp,
                 asset_binary,
                 side: BookSide::Ask.to_u8(),
-                level: level as u32,
                 price_bps: (ask.price.parse::<f64>().unwrap_or(-1.0) * 10_000.0) as i16,
                 size: ask.size.parse().unwrap_or(-1.0),
             });
         }
 
-        Ok((bids,asks))
+        Ok(book)
     }
 
     fn parse_price_change_event(&self, event: PriceChangeEvent, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Vec<PriceChange>> {
