@@ -3,4 +3,4 @@ pub mod error;
 pub mod models;
 pub mod storage;
 
-pub use error::{PolyError, Result};
+pub use error::{LoggerError, Result};

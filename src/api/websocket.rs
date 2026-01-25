@@ -1,10 +1,11 @@
-use crate::error::{PolyError, Result};
+use crate::error::{LoggerError, Result};
 use crate::models::events::{BookLevel, BookSide, Side, Trade};
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde::de::Error;
 use tokio::net::TcpStream;
+use tokio::time::{sleep, Duration, Instant, interval, MissedTickBehavior};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream };
 
 const WSS_URL: &str = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
@@ -66,6 +67,8 @@ pub enum MarketEvent {
 pub struct WebSocketClient {
     asset_ids: Vec<String>, //TODO change to tuple of string
     ws_stream: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+    reconnect_attempts: u32,
+    max_reconnect_attempts: u32,
 
 }
 
@@ -74,19 +77,51 @@ impl WebSocketClient {
         Self {
             asset_ids,
             ws_stream: None,
+            reconnect_attempts: 0,
+            max_reconnect_attempts: 10,
         }
     }
 
     pub async fn connect(&mut self) -> Result<()> {
         let (ws_stream, _) = connect_async(WSS_URL)
             .await
-            .map_err(|e| PolyError::WebsocketError(e.to_string()))?;
+            .map_err(|e| LoggerError::WebsocketError(e.to_string()))?;
 
         self.ws_stream = Some(ws_stream);
-
         self.subscribe().await?;
+        self.reconnect_attempts = 0;
+
+        println!("Websocket connected successfully: {}", WSS_URL);
 
         Ok(())
+    }
+
+    pub async fn connect_with_retry(&mut self) -> Result<()> {
+        loop {
+            match self.connect().await {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    self.reconnect_attempts += 1;
+
+                    if self.reconnect_attempts >= self.max_reconnect_attempts {
+                        return Err(LoggerError::WebsocketError(
+                            format!("Max reconnect attemps ({}) exceeded", self.max_reconnect_attempts)
+                        ));
+                    }
+
+                    let backoff_secs = std::cmp::min(2u64.pow(self.reconnect_attempts), 60);
+                    eprintln!(
+                        "Connection failed (attempt {}/{}): {}. Retrying in {}s...",
+                        self.reconnect_attempts,
+                        self.max_reconnect_attempts,
+                        e,
+                        backoff_secs
+                    );
+
+                    sleep(Duration::from_secs(backoff_secs)).await;
+                }
+            }
+        }
     }
 
     async fn subscribe(&mut self) -> Result<()> {
@@ -100,7 +135,7 @@ impl WebSocketClient {
         if let Some(ws) = &mut self.ws_stream {
             ws.send(Message::Text(msg.into()))
             .await
-            .map_err(|e| PolyError::WebsocketError(e.to_string()))?;
+            .map_err(|e| LoggerError::WebsocketError(e.to_string()))?;
         }
 
         Ok(())
@@ -110,7 +145,7 @@ impl WebSocketClient {
         if let Some(ws) = &mut self.ws_stream {
             ws.send(Message::Text("PING".into()))
                 .await
-                .map_err(|e| PolyError::WebsocketError(e.to_string()))?;
+                .map_err(|e| LoggerError::WebsocketError(e.to_string()))?;
         }
         Ok(())
     }
@@ -118,7 +153,7 @@ impl WebSocketClient {
     pub async fn next_event(&mut self, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Option<Vec<MarketEvent>>> {
         if let Some(ws) = &mut self.ws_stream {
             if let Some(msg_result) = ws.next().await {
-                let msg = msg_result.map_err(|e| PolyError::WebsocketError(e.to_string()))?;
+                let msg = msg_result.map_err(|e| LoggerError::WebsocketError(e.to_string()))?;
                 
                 match msg {
                     Message::Text(text) => {
@@ -130,7 +165,7 @@ impl WebSocketClient {
 
                     }
                     Message::Close(_) => {
-                        return Err(PolyError::WebsocketError("Connection closed".to_string()));
+                        return Err(LoggerError::WebsocketError("Connection closed".to_string()));
                     }
                     _ => return Ok(None),
                 }
@@ -173,7 +208,7 @@ impl WebSocketClient {
                 Some("price_change") => {
                     let event: PriceChangeEvent = serde_json::from_value(val)?;
                     let price_changes = self.parse_price_change_event(event, asset_binary_map)?;
-                    Some(MarketEvent::BookLevel(price_changes))
+                    Some(MarketEvent::PriceChange(price_changes))
                 }
                 Some("last_trade_price") => {
                     let event: TradeEvent = serde_json::from_value(val)?;
@@ -193,9 +228,9 @@ impl WebSocketClient {
 
     fn parse_book_event(&self, event: BookEvent, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Vec<BookLevel>> {
         let timestamp = event.timestamp.parse::<i64>()
-            .map_err(|_| PolyError::JsonError(serde_json::Error::custom("Invalid timestamp")))?;
+            .map_err(|_| LoggerError::JsonError(serde_json::Error::custom("Invalid timestamp")))?;
         let asset_binary = *asset_binary_map.get(&event.asset_id)
-            .ok_or(PolyError::InvalidAssetId("Invalid asset_id for book event".to_string()))?;
+            .ok_or(LoggerError::InvalidAssetId("Invalid asset_id for book event".to_string()))?;
 
         let mut book = Vec::new();
 
@@ -226,16 +261,16 @@ impl WebSocketClient {
 
     fn parse_price_change_event(&self, event: PriceChangeEvent, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Vec<BookLevel>> {
         let timestamp = event.timestamp.parse::<i64>()
-            .map_err(|_| PolyError::JsonError(serde_json::Error::custom("Invalid timestamp")))?;
+            .map_err(|_| LoggerError::JsonError(serde_json::Error::custom("Invalid timestamp")))?;
     
         let mut changes = Vec::new();
 
         for change in event.price_changes {
             let asset_binary = *asset_binary_map.get(&change.asset_id)
-                .ok_or(PolyError::InvalidAssetId("Invalid asset_id for price change envent".to_string()))?;
+                .ok_or(LoggerError::InvalidAssetId("Invalid asset_id for price change envent".to_string()))?;
 
             let side = Side::from_str(&change.side)
-                .ok_or_else(|| PolyError::JsonError(serde_json::Error::custom("Invalid Side")))?;
+                .ok_or_else(|| LoggerError::JsonError(serde_json::Error::custom("Invalid Side")))?;
 
             changes.push(BookLevel {
                 timestamp,
@@ -250,13 +285,13 @@ impl WebSocketClient {
 
     fn parse_trade_event(&self, event: TradeEvent, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Trade> {
         let timestamp = event.timestamp.parse::<i64>()
-            .map_err(|_| PolyError::JsonError(serde_json::Error::custom("Invalid timestamp")))?;
+            .map_err(|_| LoggerError::JsonError(serde_json::Error::custom("Invalid timestamp")))?;
 
         let asset_binary = *asset_binary_map.get(&event.asset_id)
-            .ok_or(PolyError::InvalidAssetId("Invalid asset_id for trade event".to_string()))?;
+            .ok_or(LoggerError::InvalidAssetId("Invalid asset_id for trade event".to_string()))?;
 
         let side = Side::from_str(&event.side)
-            .ok_or_else(|| PolyError::JsonError(serde_json::Error::custom("Invalid side")))?;
+            .ok_or_else(|| LoggerError::JsonError(serde_json::Error::custom("Invalid side")))?;
 
         let transaction_hash = Trade::parse_hash_hex(&event.transaction_hash);
 
