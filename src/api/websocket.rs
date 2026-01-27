@@ -8,6 +8,8 @@ use tokio::net::TcpStream;
 use tokio::time::{sleep, Duration, Instant, interval, MissedTickBehavior};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream };
 
+use std::any::type_name;
+
 const WSS_URL: &str = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
 
 #[derive(Debug, Serialize)]
@@ -65,7 +67,7 @@ pub enum MarketEvent {
 }
 
 pub struct WebSocketClient {
-    asset_ids: Vec<String>, //TODO change to tuple of string
+    asset_ids: Vec<String>, 
     ws_stream: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     reconnect_attempts: u32,
     max_reconnect_attempts: u32,
@@ -150,7 +152,7 @@ impl WebSocketClient {
         Ok(())
     }
 
-    pub async fn next_event(&mut self, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Option<Vec<MarketEvent>>> {
+    pub async fn next_event(&mut self, asset_ids: &Vec<String>) -> Result<Option<Vec<MarketEvent>>> {
         if let Some(ws) = &mut self.ws_stream {
             if let Some(msg_result) = ws.next().await {
                 let msg = msg_result.map_err(|e| LoggerError::WebsocketError(e.to_string()))?;
@@ -161,7 +163,7 @@ impl WebSocketClient {
                             self.send_ping().await?;
                             return Ok(None);
                         }
-                        return Ok(Some(self.parse_message(&text, asset_binary_map)?));
+                        return Ok(Some(self.parse_message(&text, asset_ids)?));
 
                     }
                     Message::Close(_) => {
@@ -175,7 +177,7 @@ impl WebSocketClient {
         Ok(None)
     }
 
-    fn parse_message(&self, text: &str, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Vec<MarketEvent>> {
+    fn parse_message(&self, text: &str, asset_ids: &Vec<String>) -> Result<Vec<MarketEvent>> {
         let value: serde_json::Value = serde_json::from_str(text)?;
         //println!("{}", text);
         //println!();
@@ -202,17 +204,17 @@ impl WebSocketClient {
             let event = match val.get("event_type").and_then(|v| v.as_str()) {
                 Some("book") => {
                     let event: BookEvent = serde_json::from_value(val.clone())?;
-                    let book = self.parse_book_event(event, asset_binary_map)?;
+                    let book = self.parse_book_event(event, asset_ids)?;
                     Some(MarketEvent::Book(book))
                 }
                 Some("price_change") => {
                     let event: PriceChangeEvent = serde_json::from_value(val)?;
-                    let price_changes = self.parse_price_change_event(event, asset_binary_map)?;
+                    let price_changes = self.parse_price_change_event(event, asset_ids)?;
                     Some(MarketEvent::PriceChange(price_changes))
                 }
                 Some("last_trade_price") => {
                     let event: TradeEvent = serde_json::from_value(val)?;
-                    let trade = self.parse_trade_event(event, asset_binary_map)?;
+                    let trade = self.parse_trade_event(event, asset_ids)?;
                     Some(MarketEvent::Trade(trade))
                 }
                 _ => None,
@@ -226,12 +228,17 @@ impl WebSocketClient {
         Ok(events)
     }
 
-    fn parse_book_event(&self, event: BookEvent, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Vec<BookLevel>> {
+    fn parse_book_event(&self, event: BookEvent, asset_ids: &Vec<String>) -> Result<Vec<BookLevel>> {
         let timestamp = event.timestamp.parse::<i64>()
-            .map_err(|_| LoggerError::JsonError(serde_json::Error::custom("Invalid timestamp")))?;
-        let asset_binary = *asset_binary_map.get(&event.asset_id)
-            .ok_or(LoggerError::InvalidAssetId("Invalid asset_id for book event".to_string()))?;
+            .map_err(|_| LoggerError::JsonError(
+                    serde_json::Error::custom(
+                        format!("Invalid timestamp for {} timestamp: {:?}", type_name::<BookEvent>(), event.timestamp)
+                    )
+            ))?;
 
+        let asset_binary = asset_ids.iter().position(|x| x == &event.asset_id)
+            .ok_or(LoggerError::InvalidAssetId("Invalid asset_id for book event".to_string()))? as u8;
+ 
         let mut book = Vec::new();
 
         // parse bid
@@ -259,15 +266,19 @@ impl WebSocketClient {
         Ok(book)
     }
 
-    fn parse_price_change_event(&self, event: PriceChangeEvent, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Vec<BookLevel>> {
+    fn parse_price_change_event(&self, event: PriceChangeEvent, asset_ids: &Vec<String>) -> Result<Vec<BookLevel>> {
         let timestamp = event.timestamp.parse::<i64>()
-            .map_err(|_| LoggerError::JsonError(serde_json::Error::custom("Invalid timestamp")))?;
+            .map_err(|_| LoggerError::JsonError(
+                    serde_json::Error::custom(
+                        format!("Invalid timestamp for {} timestamp: {:?}", type_name::<PriceChangeEvent>(), event)
+                    )
+            ))?;
     
         let mut changes = Vec::new();
 
         for change in event.price_changes {
-            let asset_binary = *asset_binary_map.get(&change.asset_id)
-                .ok_or(LoggerError::InvalidAssetId("Invalid asset_id for price change envent".to_string()))?;
+            let asset_binary = asset_ids.iter().position(|x| x == &change.asset_id)
+                .ok_or(LoggerError::InvalidAssetId("Invalid asset_id for price change envent".to_string()))? as u8;
 
             let side = Side::from_str(&change.side)
                 .ok_or_else(|| LoggerError::JsonError(serde_json::Error::custom("Invalid Side")))?;
@@ -283,12 +294,12 @@ impl WebSocketClient {
         Ok(changes)
     }
 
-    fn parse_trade_event(&self, event: TradeEvent, asset_binary_map: &std::collections::HashMap<String, u8>) -> Result<Trade> {
+    fn parse_trade_event(&self, event: TradeEvent, asset_ids: &Vec<String>) -> Result<Trade> {
         let timestamp = event.timestamp.parse::<i64>()
             .map_err(|_| LoggerError::JsonError(serde_json::Error::custom("Invalid timestamp")))?;
 
-        let asset_binary = *asset_binary_map.get(&event.asset_id)
-            .ok_or(LoggerError::InvalidAssetId("Invalid asset_id for trade event".to_string()))?;
+        let asset_binary = asset_ids.iter().position(|x| x == &event.asset_id)
+            .ok_or(LoggerError::InvalidAssetId("Invalid asset_id for trade event".to_string()))? as u8;
 
         let side = Side::from_str(&event.side)
             .ok_or_else(|| LoggerError::JsonError(serde_json::Error::custom("Invalid side")))?;

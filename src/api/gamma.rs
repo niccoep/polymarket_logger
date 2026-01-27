@@ -1,4 +1,4 @@
-use crate::error::{PolyError, Result};
+use crate::error::{LoggerError, Result};
 use crate::models::market::MarketInfo;
 use reqwest::Client;
 
@@ -26,7 +26,7 @@ impl GammaClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(PolyError::MarketNotFound(slug.to_string()));
+            return Err(LoggerError::MarketNotFound(slug.to_string()));
         }
 
         let market: MarketInfo = response.json::<MarketInfo>().await?;

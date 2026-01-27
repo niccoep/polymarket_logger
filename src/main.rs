@@ -1,9 +1,14 @@
 
-use logger::api::websocket;
-use logger::models::*;
-use logger::storage::ParquetWriter;
+use std::path::PathBuf;
+use logger::storage::SessionManager;
+use logger::error::Result;
 
-fn main() {
-    let pq = ParquetWriter;
-    println!("Hello, world!");
+#[tokio::main]
+async fn main() -> Result<()>{
+    let base_dir = PathBuf::from("./market_data");
+    let manager = SessionManager::new(base_dir);
+
+    manager.run().await?;
+
+    Ok(())
 }

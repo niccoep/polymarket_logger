@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             //    //println!("\t: {:?}", book_level);
                             //    println!("\tbook update");
                             //}
-                            println!("\tbook update");
+                            println!("\tbook update {}", book_snapshot[0].timestamp);
                             println!();
                         }
 
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     MarketEvent::Trade(trade) => {
                         let symbol = if trade.asset_binary == 0 { "▲" } else { "▼" };
                         let side = if trade.side == 0 { "BUY " } else { "SELL" };
-                        println!("\t{} {:<4} ${:<5} {:<8.2} {:08x}", symbol, side, (trade.price_bps as f64 / 10_000.0), trade.size, (trade.transaction_hash >> 96) as u32);
+                        println!("\t{} {:<4} ${:<5} {:<8.2} {:08x} {}", symbol, side, (trade.price_bps as f64 / 10_000.0), trade.size, (trade.transaction_hash >> 96) as u32, trade.timestamp);
                     }
                 }
             }

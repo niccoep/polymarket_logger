@@ -2,6 +2,5 @@ mod parquet;
 mod session;
 mod manager;
 
-pub use parquet::ParquetWriter;
-//pub use session::{SessionTask, SessionConfig};
-//pub use manager::SessionManager;
+pub use session::SessionStats;
+pub use manager::SessionManager;

@@ -1,5 +1,4 @@
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::time::{Duration, sleep, Instant};
 use tokio::select;
@@ -7,7 +6,7 @@ use uuid::Uuid;
 
 use crate::error::Result;
 use crate::api::websocket::{WebSocketClient, MarketEvent};
-use crate::storage::ParquetWriter;
+use crate::storage::parquet::ParquetWriter;
 
 #[derive(Debug)]
 pub struct SessionStats {
@@ -20,13 +19,22 @@ pub struct SessionStats {
 pub struct Session {
     id: Uuid,
     asset_ids: Vec<String>,
-    asset_binary_map: HashMap<String, u8>,
+    //asset_binary_map: HashMap<String, u8>,
     output_dir: PathBuf,
     duration: Duration,
     max_retries: u32,
 }
 
 impl Session {
+    pub fn new(asset_ids: Vec<String>, output_dir: PathBuf, duration: Duration) -> Self {
+        Self {
+            id: Uuid::now_v7(),
+            asset_ids,
+            output_dir,
+            duration,
+            max_retries: 10,
+        }
+    }
     pub async fn run(self) -> Result<SessionStats> {
         let mut retry_count = 0;
 
@@ -58,11 +66,9 @@ impl Session {
         let mut ws_client = WebSocketClient::new(self.asset_ids.clone());
         ws_client.connect_with_retry().await?;
 
-        let filename = format!("session_{}_{}.parquet",
-            self.id,
-            chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+        let filename = format!("{}_{}.parquet", self.id, chrono::Utc::now().format("%Y%m%d_%H%M%S"));
         let file_path = self.output_dir.join(filename);
-        let mut writer = ParquetWriter::new(file_path, 1000)?;
+        let mut writer = ParquetWriter::new(file_path, 4000)?;
         
         println!("Session {} started, will run for {:?}", self.id, self.duration);
         let mut events_processed = 0u64;
@@ -70,7 +76,7 @@ impl Session {
         
         let result: Result<()> = loop {
             select! {
-                event_result = ws_client.next_event(&self.asset_binary_map) => {
+                event_result = ws_client.next_event(&self.asset_ids) => {
                     match event_result {
                         Ok(Some(events)) => {
                             for event in events {
