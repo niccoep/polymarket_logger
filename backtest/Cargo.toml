@@ -1,0 +1,10 @@
+[package]
+name = "backtest"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.43"
+glob = "0.3.3"
+polars = { version = "0.39", features = ["lazy", "parquet", "dtype-u8"] }
+rayon = "1.11.0"
