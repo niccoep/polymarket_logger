@@ -1,6 +1,10 @@
 # polymarket-logger
 
-A Rust tool for streaming and logging real-time order book data from [Polymarket](https://polymarket.com) prediction markets to Parquet files, focused on crypto price-prediction markets (BTC, ETH, SOL, XRP).
+A Rust workspace for streaming, logging, and backtesting real-time order book data from [Polymarket](https://polymarket.com) prediction markets, focused on crypto price-prediction markets (BTC, ETH, SOL, XRP).
+
+**Crates:**
+- `logger` — streams the Polymarket CLOB WebSocket feed and writes order book data to Parquet files
+- `backtest` — loads those Parquet files and replays the order book so you can run strategies over the recorded data
 
 ## Overview
 
@@ -37,7 +41,7 @@ market_data/
 ### Run the logger
 
 ```bash
-cargo run
+cargo run -p logger
 ```
 
 This spawns one scheduler per coin × interval combination (12 total). Each scheduler:
@@ -110,6 +114,57 @@ async fn main() {
 }
 ```
 
+## Backtesting
+
+The `backtest` crate loads the logged Parquet files and replays the order book tick-by-tick. Your strategy receives a callback at each timestamp with the full reconstructed book state for both the YES and NO tokens.
+
+### Run the backtester
+
+```bash
+cargo run -p backtest
+```
+
+By default this globs `./market_data/btc/*/**/*.parquet` and runs files in parallel using Rayon.
+
+### Write a strategy
+
+Implement the `BookProcessor` trait:
+
+```rust
+use backtest::{BookProcessor, reconstruction::OrderBook};
+
+struct MyStrategy {
+    trades: Vec<(i64, f32)>,
+}
+
+impl BookProcessor for MyStrategy {
+    type Output = Vec<(i64, f32)>;
+
+    fn new() -> Self { Self { trades: vec![] } }
+
+    fn process(&mut self, timestamp: i64, books: &[OrderBook; 2]) {
+        // books[0] = YES token, books[1] = NO token
+        // books[i].bids / books[i].asks are BTreeMap<i16, f32> (price_bps → size)
+        if let Some((&best_bid_bps, _)) = books[0].bids.iter().next_back() {
+            self.trades.push((timestamp, best_bid_bps as f32 / 10_000.0));
+        }
+    }
+
+    fn finalize(self) -> Self::Output { self.trades }
+}
+```
+
+Then replay a file:
+
+```rust
+use backtest::reconstruction::BookReplay;
+
+let replay = BookReplay::from_parquet(&path)?;
+let mut strategy = MyStrategy::new();
+replay.replay(|ts, books| strategy.process(ts, books));
+let results = strategy.finalize();
+```
+
 ## Reading the Parquet files
 
 The files are ZSTD-compressed Parquet (level 4). Any Parquet-compatible tool works — for example with Python/pandas:
@@ -125,8 +180,6 @@ print(df.head())
 
 ## Dependencies
 
-- `tokio` — async runtime
-- `tokio-tungstenite` — WebSocket client
-- `arrow` / `parquet` — columnar storage
-- `reqwest` — Gamma REST API calls
-- `chrono` / `chrono-tz` — market slug generation (ET timezone)
+**logger:** `tokio`, `tokio-tungstenite`, `arrow`, `parquet`, `reqwest`, `chrono` / `chrono-tz`
+
+**backtest:** `polars` (lazy parquet reader), `rayon` (parallel file processing), `glob`
